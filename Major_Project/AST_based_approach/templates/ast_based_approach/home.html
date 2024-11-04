@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Code Similarity Checker</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <h1>Code Similarity Checker</h1>
+    
+    <div>
+        <h3>Code Sample 1:</h3>
+        <textarea id="code1" rows="10" cols="50"></textarea>
+    </div>
+    
+    <div>
+        <h3>Code Sample 2:</h3>
+        <textarea id="code2" rows="10" cols="50"></textarea>
+    </div>
+    
+    <button onclick="compareCode()">Compare Code</button>
+    
+    <div id="result"></div>
+
+    <script>
+    function compareCode() {
+        const code1 = document.getElementById('code1').value;
+        const code2 = document.getElementById('code2').value;
+
+        $.ajax({
+            url: '{% url "compare_code" %}',
+            method: 'POST',
+            data: {
+                code1: code1,
+                code2: code2,
+                csrfmiddlewaretoken: '{{ csrf_token }}'
+            },
+            success: function(response) {
+                let resultHtml = `
+                    <h3>Results:</h3>
+                    <p>Similarity Category: ${response.similarity_category}</p>
+                    <p>Total Similarity: ${response.total_similarity * 100}%</p>
+                    <p>Parameter Similarity: ${response.param_similarity * 100}%</p>
+                    <p>Operations Similarity: ${response.ops_similarity * 100}%</p>
+                    <p>Control Flow Similarity: ${response.cf_similarity * 100}%</p>
+                `;
+                document.getElementById('result').innerHTML = resultHtml;
+            },
+            error: function(xhr) {
+                let error = JSON.parse(xhr.responseText);
+                document.getElementById('result').innerHTML = `<p style="color: red">Error: ${error.error}</p>`;
+            }
+        });
+    }
+    </script>
+</body>
+</html>

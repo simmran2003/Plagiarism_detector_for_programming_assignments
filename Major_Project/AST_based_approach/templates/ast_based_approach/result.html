@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Code Similarity Results</title>
+</head>
+<body>
+    <h1>Code Similarity Results</h1>
+    <p><strong>Similarity Category:</strong> {{ similarity_category }}</p>
+    <p><strong>Total Similarity Score:</strong> {{ total_similarity }}</p>
+    <p><strong>Parameter Similarity:</strong> {{ param_similarity }}</p>
+    <p><strong>Operations Similarity:</strong> {{ ops_similarity }}</p>
+    <p><strong>Control Flow Similarity:</strong> {{ cf_similarity }}</p>
+    
+    <a href="{% url 'home' %}">Compare Again</a>
+</body>
+</html>
