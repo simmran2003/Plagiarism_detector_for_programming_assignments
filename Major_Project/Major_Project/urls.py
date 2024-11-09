@@ -16,13 +16,14 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include  # Import include
-from AST_based_approach.views import home,compare_code  # Import the home view
+# from AST_based_approach.views import home,compare_code,compare_code_view  # Import the home view
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("", include("AST_based_approach.urls")),
     # path("", home, name="home"),  # Root URL pointing to home view
     # path("AST_based_approach/", include("AST_based_approach.urls")),  # Including app's URLs
-    path('', home, name='home'),  # Main page
-    path('compare/', compare_code, name='compare_code'),
+    # path('', home, name='home'),  # Main page
+    # path('compare/', compare_code, name='compare_code'),
 ]
 

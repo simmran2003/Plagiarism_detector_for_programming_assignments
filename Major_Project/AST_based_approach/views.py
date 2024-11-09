@@ -1,201 +1,340 @@
 from django.shortcuts import render
+import json
+import re
 from django.http import JsonResponse
 from pycparser import c_parser, c_ast
-import hashlib
+from django.views.decorators.csrf import csrf_exempt
+import numpy as np
 
-def parse_c_code(c_code):
-    if not c_code:
-        print("Empty code received")
-        return None
-        
-    print("Original code received:", repr(c_code))
-    
-    # Add necessary typedefs and declarations
-    fake_libc_include = """
-    typedef void *__builtin_va_list;
-    typedef int size_t;
-    typedef int __builtin_va_list;
-    typedef int __gnuc_va_list;
-    typedef int __int32_t;
-    typedef int __uint32_t;
-    typedef int __int64_t;
-    typedef int __uint64_t;
-    typedef int __off_t;
-    typedef int __pid_t;
-    typedef int __clock_t;
-    typedef int __time_t;
-    typedef int __clockid_t;
-    typedef int __timer_t;
-    typedef int __locale_t;
-    typedef int *__FILE;
-    typedef int FILE;
-    typedef int time_t;
-    typedef int va_list;
-    typedef int ptrdiff_t;
-    typedef int wchar_t;
-    """
+# Function to extract function names from the AST
+def extract_functions_from_ast(ast_tree):
+    functions = []
+    # Loop through 'ext' of the FileAST object, which contains the declarations and functions
+    for node in ast_tree.ext:
+        if isinstance(node, c_ast.FuncDef):  # Ensure it's a function definition node
+            functions.append(node.decl.name)  # Add the function name
+    return functions
 
-    try:
-        # Clean up the code
-        c_code = c_code.replace('\r\n', '\n').replace('\r', '\n')
-        
-        # Remove any trailing semicolons after function closing brace
-        c_code = c_code.strip()
-        if c_code.endswith('};'):
-            c_code = c_code[:-1]
-        
-        # Combine fake includes with cleaned code
-        full_code = fake_libc_include + '\n' + c_code
-        
-        print("Code to parse:", repr(full_code))
-        
-        parser = c_parser.CParser()
-        ast = parser.parse(full_code)
-        
-        # Find the first function definition
-        for node in ast.ext:
-            if isinstance(node, c_ast.FuncDef):
-                return node
-                
-        print("No function definition found in the AST")
-        return None
+# # Function to compare functions (You can expand this function as per your requirements)
+# def compare_functions(functions1, functions2):
+#     # Simple example comparison: Count matching functions (This can be customized to compare structure, arguments, etc.)
+#     matching_functions = set(functions1).intersection(set(functions2))
+#     similarity_score = len(matching_functions) / max(len(functions1), len(functions2))  # Simple similarity calculation
+#     return similarity_score
 
-    except c_parser.ParseError as e:
-        print(f"ParseError details: {str(e)}")
-        return None
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-        return None
-
-def hash_function_structure(node):
-    if not isinstance(node, c_ast.FuncDef):
-        print(f"Not a FuncDef node: {type(node)}")
-        return None
-        
-    print(f"Processing function: {node.decl.name}")
-    
-    # Get function parameters
-    params = node.decl.type.args.params if node.decl.type.args else []
-    param_hash = hashlib.sha256()
-    for param in params:
-        print(f"Processing parameter: {param.name}")
-        param_hash.update(param.type.type.names[0].encode())
-        param_hash.update(param.name.encode())
-    param_hash = param_hash.hexdigest()
-
-    operation_sequence = []
-    control_flow_elements = []
-
-    def traverse_body(body):
-        if isinstance(body, c_ast.Compound) and body.block_items:
-            for stmt in body.block_items:
-                if isinstance(stmt, c_ast.Decl) and stmt.init:
-                    if isinstance(stmt.init, c_ast.BinaryOp):
-                        print(f"Found operation: {stmt.init.op}")
-                        operation_sequence.append(stmt.init.op)
-                elif isinstance(stmt, c_ast.Assignment):
-                    if isinstance(stmt.rvalue, c_ast.BinaryOp):
-                        print(f"Found operation: {stmt.rvalue.op}")
-                        operation_sequence.append(stmt.rvalue.op)
-                elif isinstance(stmt, c_ast.If):
-                    print("Found if statement")
-                    control_flow_elements.append("if")
-                    if stmt.iftrue:
-                        traverse_body(stmt.iftrue)
-                    if stmt.iffalse:
-                        traverse_body(stmt.iffalse)
-
-    traverse_body(node.body)
-    print(f"Operations found: {operation_sequence}")
-    print(f"Control flow elements found: {control_flow_elements}")
-
-    operations_hash = hashlib.sha256("".join(operation_sequence).encode()).hexdigest()
-    control_flow_hash = hashlib.sha256("".join(control_flow_elements).encode()).hexdigest()
-
-    return param_hash, operations_hash, control_flow_hash
-
-def calculate_similarity_score(hash1, hash2):
-    if hash1 is None or hash2 is None:
-        return None, None, None, None
-        
-    param_hash1, ops_hash1, cf_hash1 = hash1
-    param_hash2, ops_hash2, cf_hash2 = hash2
-
-    # Parameter similarity
-    param_similarity = 1 if param_hash1 == param_hash2 else 0
-
-    # Operations similarity
-    ops_similarity = sum(a == b for a, b in zip(ops_hash1, ops_hash2)) / max(len(ops_hash1), len(ops_hash2))
-
-    # Control flow similarity
-    cf_similarity = sum(a == b for a, b in zip(cf_hash1, cf_hash2)) / max(len(cf_hash1), len(cf_hash2))
-
-    # Calculate weighted average
-    weights = {"param": 0.3, "ops": 0.4, "cf": 0.3}
-    total_similarity = (
-        param_similarity * weights["param"] +
-        ops_similarity * weights["ops"] +
-        cf_similarity * weights["cf"]
-    )
-
-    return total_similarity, param_similarity, ops_similarity, cf_similarity
-
-def get_similarity_category(similarity_score):
-    if similarity_score > 0.5:
-        return "Similar"
-    elif similarity_score < 0.5:
-        return "Not Similar"
-    else:
-        return "Somewhat Similar"
-
+# Define your view to compare the two code samples
+@csrf_exempt
 def compare_code(request):
     if request.method == "POST":
-        code1 = request.POST.get("code1", "").strip()
-        code2 = request.POST.get("code2", "").strip()
+        try:
+            # Check if request has content
+            if not request.body:
+                return JsonResponse({"error": "Empty request body"}, status=400)
+            
+            # Try to parse JSON data
+            try:
+                data = json.loads(request.body)
+            except json.JSONDecodeError:
+                return JsonResponse({"error": "Invalid JSON format"}, status=400)
 
-        print("Processing Code 1:", repr(code1))
-        print("Processing Code 2:", repr(code2))
+            # Extract the code1 and code2 from the request data
+            code1 = data.get('code1')
+            code2 = data.get('code2')
+            print("Code1",code1)
+            print("Code2",code2)
+            # Check if both codes are provided
+            if not code1 or not code2:
+                return JsonResponse({"error": "Both code samples must be provided"}, status=400)
 
-        if not code1 or not code2:
-            return JsonResponse({"error": "Both code samples are required"}, status=400)
+            # Preprocess the C code samples
+            preprocessed_code1 = preprocess_c_code(code1)
+            preprocessed_code2 = preprocess_c_code(code2)
+            print("PP1",preprocessed_code1)
+            print("PP2",preprocessed_code2)
+            if preprocessed_code1 is None or preprocessed_code2 is None:
+                return JsonResponse({"error": "Error in preprocessing the code"}, status=400)
 
-        # Parse both code samples
-        ast1 = parse_c_code(code1)
-        ast2 = parse_c_code(code2)
+            # Parse the preprocessed C code into ASTs
+            ast1 = parse_c_code(preprocessed_code1)
+            ast2 = parse_c_code(preprocessed_code2)
 
-        # Check if parsing was successful
-        if ast1 is None:
-            return JsonResponse({"error": "Error parsing code sample 1. Please check the syntax."}, status=400)
-        if ast2 is None:
-            return JsonResponse({"error": "Error parsing code sample 2. Please check the syntax."}, status=400)
+            # print("Ast1",ast1)
+            # print("Ast2",ast2)
+            if ast1 is None or ast2 is None:
+                return JsonResponse({"error": "Error in parsing the code"}, status=400)
 
-        # Get function hashes directly since parse_c_code now returns FuncDef
-        hash1 = hash_function_structure(ast1)
-        hash2 = hash_function_structure(ast2)
+            # Extract functions from the ASTs
+            functions1 = extract_functions_from_ast(ast1)
+            functions2 = extract_functions_from_ast(ast2)
 
-        if hash1 is None:
-            return JsonResponse({"error": "No valid function found in code sample 1"}, status=400)
-        if hash2 is None:
-            return JsonResponse({"error": "No valid function found in code sample 2"}, status=400)
+            # Check if valid functions were found
+            if not functions1 or not functions2:
+                return JsonResponse({"error": "No valid functions found in one or both code samples"}, status=400)
+            print("func1:",functions1)
+            print("func2:",functions2)
+            list1 = []
+            list2 = []
+            for func in ast1:
+                if type(func).__name__ == "FuncDef":
+                    list1.append(func)
+            for func in ast2:
+                if type(func).__name__ == "FuncDef":
+                    list2.append(func)
 
-        total_similarity, param_similarity, ops_similarity, cf_similarity = calculate_similarity_score(hash1, hash2)
+            # Analyze functions to extract their characteristics
+            analyzed_functions1 = [analyze_function(item) for item in list1]
+            analyzed_functions2 = [analyze_function(item) for item in list2]
+            print("Analyzed 1:",analyzed_functions1)
+            print("Analyzed 2:",analyzed_functions2)
+            # Calculate the similarity between the functions
+            similarity_scores = []
+            for func1, func2 in zip(analyzed_functions1, analyzed_functions2):
+                similarity = calculate_similarity(func1, func2)
+                similarity_scores.append(similarity)
+
+            # Average the similarity scores to get a total similarity score
+            total_similarity = sum([score['total'] for score in similarity_scores]) / len(similarity_scores) if similarity_scores else 0
+
+            # Categorize the total similarity score
+            similarity_category = get_similarity_category(total_similarity)
+
+            # Return the results
+            return JsonResponse({
+                "total_similarity": total_similarity,
+                "similarity_category": similarity_category,
+                "function_similarity_details": similarity_scores
+            }, status=200)
+
+        except Exception as e:
+            # Handle any unexpected errors
+            return JsonResponse({"error": f"An error occurred: {str(e)}"}, status=500)
+
+def preprocess_c_code(c_code):
+    """
+    Preprocesses C code by removing preprocessor directives and comments
+    while preserving the actual code structure.
+    """
+    try:
+        # Remove comments (single-line and multi-line)
+        c_code = re.sub(r'//.*?$', '', c_code, flags=re.MULTILINE)
+        c_code = re.sub(r'/\.?\*/', '', c_code, flags=re.DOTALL)
+
+        # Remove #include directives
+        c_code = re.sub(r'#include.*?\n', '', c_code)
         
-        if total_similarity is None:
-            return JsonResponse({"error": "Error calculating similarity"}, status=400)
+        # Replace bool with int and true/false with 1/0 directly
+        c_code = """
+typedef int bool;
+""" + c_code.replace('true', '1').replace('false', '0')
 
-        similarity_category = get_similarity_category(total_similarity)
+        # Normalize whitespace while preserving newlines
+        c_code = re.sub(r'[ \t]+', ' ', c_code)
+        c_code = re.sub(r'\n\s*\n', '\n', c_code)
 
-        result = {
-            "total_similarity": round(total_similarity, 2),
-            "similarity_category": similarity_category,
-            "param_similarity": round(param_similarity, 2),
-            "ops_similarity": round(ops_similarity, 2),
-            "cf_similarity": round(cf_similarity, 2)
+        return c_code.strip()
+    except Exception as e:
+        print(f"Error in preprocessing: {e}")
+        return None
+
+def parse_c_code(c_code):
+    """
+    Parse C code into AST using pycparser.
+    """
+    parser = c_parser.CParser()
+    try:
+        # Add fake headers to help with parsing
+        fake_headers = """
+typedef int __builtin_va_list;
+typedef int __gnuc_va_list;
+typedef int __int8_t;
+typedef int __uint8_t;
+typedef int __int16_t;
+typedef int __uint16_t;
+typedef int __int_least16_t;
+typedef int __uint_least16_t;
+typedef int __int32_t;
+typedef int __uint32_t;
+typedef int __int64_t;
+typedef int __uint64_t;
+typedef int __int_least32_t;
+typedef int __uint_least32_t;
+typedef int _LOCK_T;
+typedef int _LOCK_RECURSIVE_T;
+typedef int _off_t;
+typedef int __dev_t;
+typedef int __uid_t;
+typedef int __gid_t;
+"""
+        # Combine headers with preprocessed code
+        full_code = fake_headers + c_code
+        
+        # Parse the combined code
+        ast = parser.parse(full_code)
+        
+        if ast is None:
+            print("Failed to generate AST")
+            return None
+            
+        return ast
+        
+    except c_parser.ParseError as e:
+        print(f"Parse error: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error during parsing: {e}")
+        return None
+
+
+def analyze_function(func_def):
+    """
+    Analyzes a FuncDef node to extract characteristics for similarity analysis.
+    """
+    # Initialize analysis result
+    analysis = {
+        'parameters': set(),
+        'operations': [],
+        'control_flow': [],
+        'function_calls': set(),
+        'return_statements': [],
+        'variables': set(),
+        'constants': set()
+    }
+    print(type(func_def))
+    # Extract parameters
+    if func_def.decl and isinstance(func_def.decl.type, c_ast.FuncDecl) and func_def.decl.type.args:
+        for param in func_def.decl.type.args.params:
+            if isinstance(param, c_ast.Decl) and param.name:
+                analysis['parameters'].add(param.name)
+                if isinstance(param.type, c_ast.TypeDecl) and isinstance(param.type.type, c_ast.IdentifierType):
+                    analysis['variables'].add(param.name)
+
+    # Recursive helper function to traverse nodes
+    def visit(node):
+        if isinstance(node, c_ast.BinaryOp):
+            # Capture binary operations
+            analysis['operations'].append(f"BINOP_{node.op}")
+            visit(node.left)
+            visit(node.right)
+            
+        elif isinstance(node, c_ast.Assignment):
+            # Capture assignment operations
+            analysis['operations'].append(f"ASSIGN_{node.op}")
+            visit(node.rvalue)
+            visit(node.lvalue)
+            
+        elif isinstance(node, c_ast.If):
+            # Capture control flow (If statements)
+            analysis['control_flow'].append("IF")
+            visit(node.cond)
+            if node.iftrue:
+                visit(node.iftrue)
+            if node.iffalse:
+                analysis['control_flow'].append("ELSE")
+                visit(node.iffalse)
+                
+        elif isinstance(node, c_ast.Return):
+            # Capture return statements
+            analysis['return_statements'].append("RETURN")
+            if node.expr:
+                visit(node.expr)
+                
+        elif isinstance(node, c_ast.ID):
+            # Capture variable usage
+            analysis['variables'].add(node.name)
+            
+        elif isinstance(node, c_ast.Constant):
+            # Capture constants
+            analysis['constants'].add(node.value)
+            
+        elif isinstance(node, c_ast.FuncCall):
+            # Capture function calls
+            if isinstance(node.name, c_ast.ID):
+                analysis['function_calls'].add(node.name.name)
+            if node.args:
+                for arg in node.args.exprs:
+                    visit(arg)
+                    
+        elif isinstance(node, c_ast.Compound):
+            # Process each statement in a compound block
+            if node.block_items:
+                for stmt in node.block_items:
+                    visit(stmt)
+                    
+        # Add more node types if needed for other cases
+
+    # Start traversal on the function body
+    if func_def.body:
+        visit(func_def.body)
+    
+    return analysis
+
+def sequence_similarity(seq1, seq2):
+    """
+    Computes Levenshtein similarity between two sequences.
+    """
+    try:
+        if not seq1 and not seq2:
+            return 1.0
+        if not seq1 or not seq2:
+            return 0.0
+        
+        # Initialize matrix for Levenshtein distance
+        len1, len2 = len(seq1), len(seq2)
+        matrix = np.zeros((len1 + 1, len2 + 1))
+
+        for i in range(len1 + 1):
+            matrix[i][0] = i
+        for j in range(len2 + 1):
+            matrix[0][j] = j
+
+        for i in range(1, len1 + 1):
+            for j in range(1, len2 + 1):
+                cost = 0 if seq1[i - 1] == seq2[j - 1] else 1
+                matrix[i][j] = min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost)
+
+        # Return normalized similarity score
+        return 1 - matrix[len1][len2] / max(len1, len2)
+    except Exception as e:
+        print(f"Error calculating Levenshtein similarity: {e}")
+        return 0.0
+
+
+def calculate_similarity(analysis1, analysis2):
+    """
+    Calculates similarity between two analyzed functions.
+    """
+    try:
+        # Convert sets to sorted lists for Levenshtein similarity calculation
+        parameters_similarity = sequence_similarity(sorted(analysis1['parameters']), sorted(analysis2['parameters']))
+        operations_similarity = sequence_similarity(analysis1['operations'], analysis2['operations'])
+        control_flow_similarity = sequence_similarity(analysis1['control_flow'], analysis2['control_flow'])
+
+        return {
+            'total': (parameters_similarity + operations_similarity + control_flow_similarity) / 3,
+            'parameters': parameters_similarity,
+            'operations': operations_similarity,
+            'control_flow': control_flow_similarity
+        }
+    except Exception as e:
+        print(f"Error calculating similarity: {e}")
+        return {
+            'total': 0.0,
+            'parameters': 0.0,
+            'operations': 0.0,
+            'control_flow': 0.0
         }
 
-        return JsonResponse(result)
 
-    return JsonResponse({"error": "Invalid request method"}, status=405)
-    
+def get_similarity_category(similarity_score):
+    """
+    Categorizes the similarity score.
+    """
+    if similarity_score >= 0.6:
+        return "Highly Similar"
+    # elif similarity_score >= 0.5:
+    #     return "Moderately Similar"
+    else:
+        return "Low Similarity"
+
 def home(request):
     return render(request, 'AST_based_approach/home.html')
