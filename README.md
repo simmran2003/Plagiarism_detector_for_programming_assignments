@@ -1,7 +1,7 @@
 # Plagiarism Detection in Source Codes using ASTs
 
 ## Overview
-This project, developed by Jatin Gupta, Aman Kulshrestha, and I, focuses on detecting plagiarism in source codes using **Abstract Syntax Trees (ASTs)**. We implemented an algorithm that evaluates source codes based on three key features: **operation similarity**, **control flow similarity**, and **parameter similarity**. The system then constructs ASTs to facilitate accurate plagiarism detection.
+This project, developed by Simmran Agarwal,Jatin Gupta and Aman Kulshrestha, focuses on detecting plagiarism in source codes using **Abstract Syntax Trees (ASTs)**. We implemented an algorithm that evaluates source codes based on three key features: **operation similarity**, **control flow similarity**, and **parameter similarity**. The system then constructs ASTs to facilitate accurate plagiarism detection.
 
 We also built a platform called **Class Forge** using the MERN stack, designed to be a comprehensive solution for both students and teachers. It functions like Google Classroom, allowing teachers to post assignments, evaluate submissions, and check for plagiarism, while students can solve and submit assignments seamlessly.
 
